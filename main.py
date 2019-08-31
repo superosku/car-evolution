@@ -1,9 +1,8 @@
 import math
 import random
-import Box2D
 
 import pygame
-from Box2D import b2World, b2EdgeShape, b2CircleShape
+from Box2D import b2World
 
 black = pygame.color.Color(0, 0, 0)
 green = pygame.color.Color(0, 255, 0)
@@ -16,9 +15,13 @@ def vec_len(vec):
     return math.sqrt(vec[0] ** 2 + vec[1] ** 2)
 
 
+def sigmoid(x):
+  return 1 / (1 + math.exp(-x))
+
+
 class Camera:
     def __init__(self, screen_x, screen_y):
-        self.zoom = 100
+        self.zoom = 40
         self.x = 0
         self.y = 0
 
@@ -37,30 +40,45 @@ def random_ground_points():
     for i in range(200):
         ground_points.append((
             ground_points[-1][0] + 1 + random.random() * 1.5,
-            ground_points[-1][1] + (random.random() - 0.49) * math.sqrt(i),
+            ground_points[-1][1] + (random.random() - 0.49) * math.sqrt(i) * 0.5,
         ))
     ground_points.insert(0, (
         ground_points[0][0],
-        -10
+        -100
     ))
     ground_points.append((
         ground_points[-1][0],
-        -10
+        -100
     ))
     return ground_points
 
 
 def random_car_points():
-    car_points = [
+    car_pointss = [
         (
             random.random() * 2 - 1,
             random.random() * 2 - 1,
             random.random() * 0.2 + 0.05,
-            random.random() < 0.5
+            i < 2
+            # random.random() < 0.5
         )
         for i in range(5)
     ]
-    return car_points
+    return car_pointss
+
+
+def mutate(car_points):
+    mutate_factor = 0.1
+    return [
+        (
+            x + (random.random() - 0.5) * mutate_factor,
+            y + (random.random() - 0.5) * mutate_factor,
+            radius + (random.random() - 0.5) * mutate_factor,
+            is_tire
+        )
+        for x, y, radius, is_tire
+        in car_points
+    ]
 
 
 class Simulation:
@@ -69,6 +87,10 @@ class Simulation:
             gravity=(0, -10),
             doSleep=False
         )
+
+        self.step_count = 0
+        self.record = 0
+        self.steps_since_record = 0
 
         self.ground = self.world.CreateStaticBody()
         self.ground.CreateChainFixture(
@@ -155,7 +177,7 @@ class Simulation:
                     bodyA=car_body,
                     bodyB=tire,
                     anchor=tire.position,
-                    motorSpeed=-50,
+                    motorSpeed=-40,
                     enableMotor=True,
                     maxMotorTorque=1000,
                 )
@@ -163,6 +185,13 @@ class Simulation:
 
     def step(self):
         self.world.Step(1.0 / 60, 8, 3)
+
+        self.step_count += 1
+        self.steps_since_record += 1
+
+        if self.score() > self.record:
+            self.record = self.score()
+            self.steps_since_record = 0
 
     def update_camera(self, camera):
         camera.x = self.car_body.position[0]
@@ -183,6 +212,9 @@ class Simulation:
             ground_points,
             2
         )
+
+    def score(self):
+        return self.car_body.position[0]
 
     def draw_car(self, screen, camera):
         # Car
@@ -245,75 +277,121 @@ class Simulation:
                 camera.box2d_to_pygame(
                     car_x - math.sin(car_angle + point_angle) * point_radius,
                     car_y + math.cos(car_angle + point_angle) * point_radius,
-                    ),
-                5
+                ),
+                int(0.03 * camera.zoom)
             )
 
 
+class Game:
+    def __init__(self):
+        self.screen_size = (600, 400)
 
-def main():
-    screen_size = (1000, 800)
+        pygame.init()
 
-    pygame.init()
-    screen = pygame.display.set_mode(screen_size)
-    clock = pygame.time.Clock()
+        self.screen = pygame.display.set_mode(
+            self.screen_size,
+            # flags=pygame.DOUBLEBUF | pygame.HWSURFACE
+        )
+        self.clock = pygame.time.Clock()
 
-    ground_points = random_ground_points()
+        self.camera = Camera(*self.screen_size)
 
-    simulation = Simulation(
-        ground_points,
-        random_car_points()
-    )
+        self.ground_points = random_ground_points()
 
-    camera = Camera(*screen_size)
+        self.tick = 0
 
-    # simulation.draw()
+        # self.car_pointss = []
+        self.car_pointss = [
+            random_car_points()
+            for _ in range(100)
+        ]
+        self.simulations =[]
 
-    while True:
-        clock.tick()
+        self.init_simulations()
 
-        try:
-            pygame.display.set_caption(f'UPS: {int(clock.get_fps())}')
-        except OverflowError:
-            pass
+    def init_simulations(self):
+        self.simulations = [
+            Simulation(
+                self.ground_points,
+                car_points
+            ) for car_points in self.car_pointss
+        ]
 
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                return
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    return
-                if event.key == pygame.K_r:
-                    while True:
-                        try:
-                            simulation = Simulation(
-                                ground_points,
-                                random_car_points()
-                            )
-                            break
-                        except AssertionError:
-                            pass
-            if event.type == pygame.MOUSEWHEEL:
-                breakpoint()
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 4:
-                    camera.zoom *= 1.1
-                if event.button == 5:
-                    camera.zoom *= 0.9
+    def simulation_tick(self):
+        for simulation in self.simulations:
+            if not pygame.key.get_pressed()[pygame.K_h]:
+                simulation.step()
 
-        if not pygame.key.get_pressed()[pygame.K_h]:
-            simulation.step()
-        simulation.update_camera(camera)
+        sorted_simulations = sorted(self.simulations, key=lambda x: -x.score())
 
-        screen.fill(black)
-        simulation.draw_ground(screen, camera)
-        simulation.draw_car(screen, camera)
+        simulation = sorted_simulations[0]
+        simulation.update_camera(self.camera)
 
-        if not pygame.key.get_pressed()[pygame.K_f]:
+        self.screen.fill(black)
+        simulation.draw_ground(self.screen, self.camera)
+
+        if pygame.key.get_pressed()[pygame.K_f]:
+            for simulation in self.simulations:
+                simulation.draw_car(self.screen, self.camera)
             pygame.display.flip()
+
+    def mutate(self):
+        data = sorted([
+            (car_points, simulation.score())
+            for car_points, simulation in
+            zip(self.car_pointss, self.simulations)
+        ], key=lambda x: -x[1])
+
+        print('best score:', data[0][1])
+
+        kill_count = 20
+
+        surviving = [item for item, score in data[0:-kill_count]]
+
+        for i in range(kill_count):
+            surviving.append(
+                mutate(surviving[i])
+            )
+
+        self.car_pointss = surviving
+        self.init_simulations()
+
+    def simulate(self):
+        while True:
+
+            self.clock.tick()
+
+            try:
+                pygame.display.set_caption(f'UPS: {int(self.clock.get_fps())}')
+            except OverflowError:
+                pass
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        return
+                    if event.key == pygame.K_r:
+                        self.init_simulations()
+                if event.type == pygame.MOUSEWHEEL:
+                    breakpoint()
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if event.button == 4:
+                        self.camera.zoom *= 1.1
+                    if event.button == 5:
+                        self.camera.zoom *= 0.9
+
+            self.simulation_tick()
+
+            self.tick += 1
+
+            if self.tick % (60 * 20) == 0:
+                self.mutate()
+
 
 
 if __name__ == '__main__':
-    # random.seed(0)
-    main()
+    game = Game()
+    game.simulate()
 
