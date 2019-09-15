@@ -323,11 +323,11 @@ class Game:
 
         self.tick = 0
 
-        # self.car_pointss = [
-        #     random_car_points()
-        #     for _ in range(total_car_count)
-        # ]
-        self.car_pointss = [random_car_points()] * total_car_count
+        self.car_pointss = [
+            random_car_points()
+            for _ in range(total_car_count)
+        ]
+        #self.car_pointss = [random_car_points()] * total_car_count
         self.simulations =[]
 
         self.fast_mode = False
